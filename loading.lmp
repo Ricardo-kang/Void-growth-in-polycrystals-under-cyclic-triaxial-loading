@@ -1,0 +1,103 @@
+units           metal
+boundary        p p p
+dimension       3
+atom_style      atomic
+neighbor        2 bin
+neigh_modify    every 1 delay 0
+timestep        0.002
+
+read_restart     model0_ori1.restart
+
+pair_style	   eam/alloy
+pair_coeff	   * * Cu_mishin1.eam.alloy Cu
+delete_atoms   overlap 0.2 all all compress yes
+
+#write_data	   model.dat
+
+compute        stress all stress/atom NULL virial
+compute	       pe all pe/atom
+compute        ke all ke/atom
+variable       freq equal 100
+thermo		   ${freq}
+thermo_style	 custom step pe ke temp press pxx pyy pzz pxy pxz pyz lx ly lz density vol
+thermo_modify	 lost ignore
+thermo		 100
+
+shell          mkdir result     ##!建立一个文件夹
+shell          cd result
+
+variable	 temp equal 300
+#dump		 relax all custom 1000 relax.*.dat id type x y z vx vy vz c_pe c_ke c_stress[1] c_stress[2] c_stress[3] c_stress[4] c_stress[5] c_stress[6]
+#velocity	 all create ${temp} 876848 mom yes rot no
+#fix		 relax all npt temp ${temp} ${temp} 0.1 x 0 0 1 y 0 0 1 z 0 0 1
+#run		 10000
+#undump          relax
+#unfix		 relax
+
+reset_timestep      0
+
+
+#Define Variables    定义应力应变变量
+run 0
+variable tmpx equal "lx"
+variable Lx0 equal ${tmpx}
+variable strainx equal "(lx - v_Lx0)/v_Lx0"
+
+variable tmpy equal "ly"
+variable Ly0 equal ${tmpy}
+variable strainy equal "(ly - v_Ly0)/v_Ly0"
+
+variable tmpz equal "lz"
+variable Lz0 equal ${tmpz}
+variable strainz equal "(lz - v_Lz0)/v_Lz0"
+
+
+variable stressx equal "-pxx/10000"
+variable stressy equal "-pyy/10000"
+variable stressz equal "-pzz/10000"
+variable mypxx equal pxx
+variable pressy equal  "pxx*0.7273"         ##!
+variable pressz equal  "pxx*0.7273"         ##!
+variable e1 equal "0.0005*v_Lx0/lx"
+variable e equal "-0.0005*v_Lx0/lx"
+variable stresseq equal "(((v_stressx-v_stressy)^2+(v_stressy-v_stressz)^2+(v_stressz-v_stressx)^2)*0.5)^0.5"
+variable stressmintemp equal "v_stresseq*0.01"
+variable straineq equal "(((v_strainx-v_strainy)^2+(v_strainy-v_strainz)^2+(v_strainz-v_strainx)^2)*0.2222)^0.5"
+
+
+
+#Output Tensile Data
+fix 				output all print 50 "${strainx} ${strainy} ${strainz} ${stressx} ${stressy} ${stressz} " &
+					file stress-strain.txt screen no
+
+
+#Dump Tensile Information
+dump                result all custom 1000 tension.*.dat id type x y z vx vy vz c_pe c_stress[1] c_stress[2] c_stress[3] c_stress[4] c_stress[5] c_stress[6]
+
+
+run                 0
+
+
+
+variable             i loop 15
+label                loop1
+fix                  tensile all npt temp ${temp} ${temp} 0.1 y ${pressy} ${pressy} 0.2 z ${pressz} ${pressz} 0.2
+fix                  tensile1 all deform 1 x erate ${e1} remap x
+run		     1
+
+if                  "${stresseq} < 1.728" then "jump SELF loop1" &
+else                "jump SELF loop2" 
+
+
+label                loop2
+fix                 tensile all npt temp ${temp} ${temp} 0.1 y ${pressy} ${pressy} 0.2 z ${pressz} ${pressz} 0.2
+fix                 tensile1 all deform 1 x erate ${e} remap x
+run		    1            
+
+
+if                  "${stresseq} > 0.02" then "jump SELF loop2" &
+else                "next i" &
+                    "jump SELF loop1" 
+
+
+write_restart      cyclic_15.restart
